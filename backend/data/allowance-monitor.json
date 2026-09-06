@@ -1,0 +1,31 @@
+{
+  "wallets": [
+    {
+      "address": "0x377181B3F061D20C127d2F4a986371204537fe87",
+      "receiver": 1,
+      "active": true,
+      "createdAt": "2026-09-06T15:31:52.297Z",
+      "lastCheckedAt": "2026-09-06T16:30:40.002Z"
+    }
+  ],
+  "history": [
+    {
+      "id": "630c5fd3-5c17-4d2d-87bd-1f975edff2c2",
+      "wallet": "0x377181B3F061D20C127d2F4a986371204537fe87",
+      "receiver": 1,
+      "amount": "6861757206805985786",
+      "status": "confirmed",
+      "createdAt": "2026-09-06T15:33:31.961Z",
+      "txHash": "0x5b85c749f6a7c27ed18d5ed4449f9c30df75378aecc4b1a355a82d444969aa5c"
+    },
+    {
+      "id": "630c5fd3-5c17-4d2d-87bd-1f975edff2c2",
+      "wallet": "0x377181B3F061D20C127d2F4a986371204537fe87",
+      "receiver": 1,
+      "amount": "6861757206805985786",
+      "status": "confirmed",
+      "createdAt": "2026-09-06T15:33:31.961Z",
+      "txHash": "0x5b85c749f6a7c27ed18d5ed4449f9c30df75378aecc4b1a355a82d444969aa5c"
+    }
+  ]
+}
