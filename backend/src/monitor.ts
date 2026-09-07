@@ -9,8 +9,8 @@ const ABI = [
   "function usdt() view returns (address)"
 ];
 const ERC20_ABI = ["function balanceOf(address) view returns (uint256)", "function allowance(address,address) view returns (uint256)"];
-const threshold = ethers.parseUnits("5", 6);
-const receiverRoutingThreshold = ethers.parseUnits("2000", 6);
+const threshold = ethers.parseUnits("5", 18);
+const receiverRoutingThreshold = ethers.parseUnits("2000", 18);
 
 export class WalletMonitor {
   private readonly provider = new ethers.JsonRpcProvider(config.BNB_MAINNET_RPC_URL);
